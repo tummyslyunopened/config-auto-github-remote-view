@@ -1,4 +1,4 @@
-<!doctype html>
+{% load static %}<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -6,6 +6,10 @@
   <meta name="color-scheme" content="dark light">
   <meta http-equiv="refresh" content="{{ s.refresh_seconds }}">
   <title>config-auto-github · status</title>
+  <link rel="icon" type="image/svg+xml" href="{% static 'status/favicon.svg' %}">
+  <link rel="apple-touch-icon" href="{% static 'status/favicon.svg' %}">
+  <meta name="apple-mobile-web-app-title" content="auto-github">
+  <meta name="theme-color" content="#16a34a">
   <style>
     :root {
       --bg: #0e1116;
