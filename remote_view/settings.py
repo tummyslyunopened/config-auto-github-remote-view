@@ -73,13 +73,24 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # ---------------------------------------------------------------------------
 
 def _default_data_dir() -> Path:
+    # config-auto-github writes its queue and logs directly inside the submodule
+    # checkout (e.g. ~/config/config-auto-github), not into a separate .data dir.
     home = Path(os.path.expanduser('~'))
-    return home / 'config' / '.data' / 'config-auto-github'
+    return home / 'config' / 'config-auto-github'
 
 CAG_DATA_DIR = Path(os.environ.get('CAG_DATA_DIR', str(_default_data_dir())))
+
+# Queue can be exposed two ways:
+#   - CAG_QUEUE_FILE: a single JSON file containing an array of queue items
+#     (this is the layout config-auto-github currently produces)
+#   - CAG_QUEUE_DIR : a directory of per-item *.json files (alternative layout)
+# Both are checked at read time; whichever exists wins, with the file taking
+# precedence so the simpler single-file layout is the default.
+CAG_QUEUE_FILE = Path(os.environ.get('CAG_QUEUE_FILE', str(CAG_DATA_DIR / 'queue.json')))
 CAG_QUEUE_DIR = Path(os.environ.get('CAG_QUEUE_DIR', str(CAG_DATA_DIR / 'queue')))
-CAG_MONITOR_LOG = Path(os.environ.get('CAG_MONITOR_LOG', str(CAG_DATA_DIR / 'monitor.log')))
-CAG_WORKER_LOG = Path(os.environ.get('CAG_WORKER_LOG', str(CAG_DATA_DIR / 'worker.log')))
+
+CAG_MONITOR_LOG = Path(os.environ.get('CAG_MONITOR_LOG', str(CAG_DATA_DIR / 'logs' / 'monitor.log')))
+CAG_WORKER_LOG = Path(os.environ.get('CAG_WORKER_LOG', str(CAG_DATA_DIR / 'logs' / 'worker.log')))
 CAG_MONITOR_PIDFILE = Path(os.environ.get('CAG_MONITOR_PIDFILE', str(CAG_DATA_DIR / 'monitor.pid')))
 CAG_WORKER_PIDFILE = Path(os.environ.get('CAG_WORKER_PIDFILE', str(CAG_DATA_DIR / 'worker.pid')))
 CAG_LOG_TAIL_LINES = int(os.environ.get('CAG_LOG_TAIL_LINES', '200'))

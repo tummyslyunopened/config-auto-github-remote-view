@@ -119,7 +119,7 @@ def _tail_lines(path: Path, n: int) -> list[str]:
         return []
     try:
         # deque keeps memory bounded for big logs
-        with path.open('r', encoding='utf-8', errors='replace') as fh:
+        with path.open('r', encoding='utf-8-sig', errors='replace') as fh:
             return list(deque(fh, maxlen=n))
     except OSError:
         return []
@@ -135,7 +135,7 @@ def _load_queue_item(p: Path) -> QueueItem:
     item = QueueItem(filename=p.name, modified=modified, size_bytes=stat.st_size)
 
     try:
-        text = p.read_text(encoding='utf-8', errors='replace')
+        text = p.read_text(encoding='utf-8-sig', errors='replace')
     except OSError:
         return item
 
@@ -160,9 +160,53 @@ def _load_queue_item(p: Path) -> QueueItem:
     return item
 
 
-def _list_queue(queue_dir: Path) -> list[QueueItem]:
-    if not queue_dir.exists() or not queue_dir.is_dir():
+def _queue_item_from_dict(d: dict[str, Any], modified: str) -> QueueItem:
+    """Build a QueueItem from a parsed queue-record dict."""
+    try:
+        size = len(json.dumps(d))
+    except (TypeError, ValueError):
+        size = 0
+    item = QueueItem(
+        filename=str(d.get('id') or d.get('filename') or 'item'),
+        modified=str(d.get('addedAt') or d.get('startedAt') or modified or ''),
+        size_bytes=size,
+        parsed=d,
+    )
+    item.title = str(d.get('title') or d.get('issue_title') or '')
+    try:
+        n = d.get('number') or d.get('issue_number')
+        item.issue_number = int(n) if n is not None else None
+    except (TypeError, ValueError):
+        item.issue_number = None
+    item.state = str(d.get('state') or d.get('status') or '')
+    return item
+
+
+def _list_queue_from_file(p: Path) -> list[QueueItem]:
+    """Parse one JSON file containing an array (or a single object) of queue records."""
+    try:
+        text = p.read_text(encoding='utf-8-sig', errors='replace')
+        data = json.loads(text)
+        stat = p.stat()
+    except (OSError, ValueError, json.JSONDecodeError):
         return []
+    modified = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(timespec='seconds')
+
+    if isinstance(data, list):
+        records = [d for d in data if isinstance(d, dict)]
+    elif isinstance(data, dict):
+        records = [data]
+    else:
+        return []
+
+    items = [_queue_item_from_dict(d, modified) for d in records]
+    # Newest first by addedAt/startedAt, falling back to file mtime.
+    items.sort(key=lambda i: i.modified, reverse=True)
+    return items
+
+
+def _list_queue_from_dir(queue_dir: Path) -> list[QueueItem]:
+    """Each file in queue_dir is treated as one queue record."""
     try:
         files = [p for p in queue_dir.iterdir() if p.is_file() and p.suffix.lower() == '.json']
     except OSError:
@@ -171,10 +215,29 @@ def _list_queue(queue_dir: Path) -> list[QueueItem]:
     return [_load_queue_item(p) for p in files]
 
 
+def _list_queue() -> list[QueueItem]:
+    """Read the queue, preferring the single-file layout over the per-item-dir layout."""
+    queue_file = Path(settings.CAG_QUEUE_FILE)
+    if queue_file.is_file():
+        return _list_queue_from_file(queue_file)
+    queue_dir = Path(settings.CAG_QUEUE_DIR)
+    if queue_dir.is_dir():
+        return _list_queue_from_dir(queue_dir)
+    return []
+
+
+def _queue_source_path() -> str:
+    """Show the user which path was actually consulted for the queue."""
+    queue_file = Path(settings.CAG_QUEUE_FILE)
+    if queue_file.is_file():
+        return str(queue_file)
+    return str(settings.CAG_QUEUE_DIR)
+
+
 def collect_snapshot() -> Snapshot:
     monitor = _process_status('monitor', Path(settings.CAG_MONITOR_PIDFILE))
     worker = _process_status('worker', Path(settings.CAG_WORKER_PIDFILE))
-    queue = _list_queue(Path(settings.CAG_QUEUE_DIR))
+    queue = _list_queue()
     monitor_tail = _tail_lines(Path(settings.CAG_MONITOR_LOG), settings.CAG_LOG_TAIL_LINES)
     worker_tail = _tail_lines(Path(settings.CAG_WORKER_LOG), settings.CAG_LOG_TAIL_LINES)
 
@@ -183,7 +246,7 @@ def collect_snapshot() -> Snapshot:
         monitor=monitor,
         worker=worker,
         queue=queue,
-        queue_dir=str(settings.CAG_QUEUE_DIR),
+        queue_dir=_queue_source_path(),
         monitor_log_path=str(settings.CAG_MONITOR_LOG),
         worker_log_path=str(settings.CAG_WORKER_LOG),
         monitor_log_tail=monitor_tail,
