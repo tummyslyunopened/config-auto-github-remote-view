@@ -1,11 +1,18 @@
-<!doctype html>
+{% load static %}<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark light">
-  <meta http-equiv="refresh" content="{{ s.refresh_seconds }}">
+  <meta name="theme-color" content="#0e1116">
   <title>config-auto-github · status</title>
+  <link rel="icon" type="image/svg+xml" href="{% static 'status/favicon.svg' %}">
+  <link rel="alternate icon" type="image/png" sizes="192x192" href="{% static 'status/icon-192.png' %}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{% static 'status/apple-touch-icon.png' %}">
+  <link rel="manifest" href="{% static 'status/manifest.webmanifest' %}">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="cag-status">
   <style>
     :root {
       --bg: #0e1116;
@@ -128,89 +135,88 @@
   <header>
     <h1>config-auto-github · status</h1>
     <span class="meta">
-      generated {{ s.generated_at }} · refresh {{ s.refresh_seconds }}s ·
+      <span data-generated-at>generated {{ s.generated_at }}</span> · refresh {{ s.refresh_seconds }}s ·
       <a href="{% url 'dashboard_json' %}">json</a>
     </span>
   </header>
 
-  <main>
-    <section class="pane">
-      <h2><span class="dot {% if s.monitor.running %}ok{% endif %}"></span> monitor</h2>
-      <div class="body">
-        <dl class="kv">
-          <dt>state</dt>
-          <dd>{% if s.monitor.running %}running{% else %}not running{% endif %}{% if s.monitor.detail %} <span class="meta">({{ s.monitor.detail }})</span>{% endif %}</dd>
-          {% if s.monitor.pid %}<dt>pid</dt><dd>{{ s.monitor.pid }}</dd>{% endif %}
-          {% if s.monitor.started_at %}<dt>started</dt><dd>{{ s.monitor.started_at }}</dd>{% endif %}
-          <dt>pidfile</dt><dd>{{ s.monitor.pid_file }}</dd>
-        </dl>
-      </div>
-    </section>
-
-    <section class="pane">
-      <h2><span class="dot {% if s.worker.running %}ok{% endif %}"></span> worker</h2>
-      <div class="body">
-        <dl class="kv">
-          <dt>state</dt>
-          <dd>{% if s.worker.running %}running{% else %}not running{% endif %}{% if s.worker.detail %} <span class="meta">({{ s.worker.detail }})</span>{% endif %}</dd>
-          {% if s.worker.pid %}<dt>pid</dt><dd>{{ s.worker.pid }}</dd>{% endif %}
-          {% if s.worker.started_at %}<dt>started</dt><dd>{{ s.worker.started_at }}</dd>{% endif %}
-          <dt>pidfile</dt><dd>{{ s.worker.pid_file }}</dd>
-        </dl>
-      </div>
-    </section>
-
-    <section class="pane full">
-      <h2>queue · {{ s.queue|length }} item{{ s.queue|length|pluralize }}</h2>
-      {% if s.queue %}
-      <ul class="queue-list">
-        {% for item in s.queue %}
-        <li>
-          <div class="row1">
-            <span class="title">
-              {% if item.issue_number %}#{{ item.issue_number }} · {% endif %}{{ item.title|default:item.filename }}
-              {% if item.state %} <span class="badge">{{ item.state }}</span>{% endif %}
-            </span>
-            <span class="when">{{ item.modified }}</span>
-          </div>
-          <div class="meta">{{ item.filename }} · {{ item.size_bytes }} bytes</div>
-        </li>
-        {% endfor %}
-      </ul>
-      {% else %}
-        <div class="body"><div class="empty">queue empty (or {{ s.queue_dir }} not present)</div></div>
-      {% endif %}
-    </section>
-
-    <section class="pane">
-      <h2>monitor log <span class="meta" style="text-transform:none;font-weight:400;">· {{ s.monitor_log_path }}</span></h2>
-      <div class="body flush">
-        {% if s.monitor_log_tail %}
-          <pre class="log">{% for line in s.monitor_log_tail %}{{ line }}{% endfor %}</pre>
-        {% else %}
-          <pre class="log empty-log">no log output (or file not present)</pre>
-        {% endif %}
-      </div>
-    </section>
-
-    <section class="pane">
-      <h2>worker log <span class="meta" style="text-transform:none;font-weight:400;">· {{ s.worker_log_path }}</span></h2>
-      <div class="body flush">
-        {% if s.worker_log_tail %}
-          <pre class="log">{% for line in s.worker_log_tail %}{{ line }}{% endfor %}</pre>
-        {% else %}
-          <pre class="log empty-log">no log output (or file not present)</pre>
-        {% endif %}
-      </div>
-    </section>
+  <main data-fragment-url="{% url 'dashboard_fragment' %}" data-refresh-seconds="{{ s.refresh_seconds }}">
+    {% include 'status/_panes.html' %}
   </main>
 
   <script>
-    // Auto-scroll log panes to the bottom on each refresh so the latest
-    // line is always visible without manual scrolling on mobile.
-    document.querySelectorAll('pre.log').forEach(function (el) {
-      el.scrollTop = el.scrollHeight;
-    });
+    (function () {
+      var main = document.querySelector('main[data-fragment-url]');
+      if (!main) return;
+      var fragmentUrl = main.getAttribute('data-fragment-url');
+      var refreshMs = (parseInt(main.getAttribute('data-refresh-seconds'), 10) || 5) * 1000;
+      var generatedEl = document.querySelector('[data-generated-at]');
+
+      function scrollLogsToBottom(root) {
+        (root || main).querySelectorAll('pre.log').forEach(function (el) {
+          el.scrollTop = el.scrollHeight;
+        });
+      }
+      scrollLogsToBottom();
+
+      var inFlight = false;
+      var pollTimer = null;
+
+      function schedulePoll() {
+        if (pollTimer) clearTimeout(pollTimer);
+        pollTimer = setTimeout(poll, refreshMs);
+      }
+
+      async function poll() {
+        if (document.hidden) { schedulePoll(); return; }
+        if (inFlight) { schedulePoll(); return; }
+        inFlight = true;
+        try {
+          var resp = await fetch(fragmentUrl, {
+            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+            credentials: 'same-origin',
+          });
+          if (resp.ok) {
+            var html = await resp.text();
+            // Remember each log pane's scroll state so manual scrolling sticks
+            // across refreshes; if the user is at the bottom we keep tailing.
+            var prevScroll = {};
+            main.querySelectorAll('section.pane[data-slug]').forEach(function (pane) {
+              var slug = pane.getAttribute('data-slug');
+              var pre = pane.querySelector('pre.log');
+              if (!pre) return;
+              var atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 4;
+              prevScroll[slug] = { top: pre.scrollTop, atBottom: atBottom };
+            });
+            main.innerHTML = html;
+            main.querySelectorAll('section.pane[data-slug]').forEach(function (pane) {
+              var slug = pane.getAttribute('data-slug');
+              var pre = pane.querySelector('pre.log');
+              if (!pre) return;
+              var prev = prevScroll[slug];
+              if (!prev || prev.atBottom) {
+                pre.scrollTop = pre.scrollHeight;
+              } else {
+                pre.scrollTop = prev.top;
+              }
+            });
+            if (generatedEl) {
+              generatedEl.textContent = 'generated ' + new Date().toISOString().replace(/\.\d+Z$/, '+00:00');
+            }
+          }
+        } catch (e) { /* swallow — try again next tick */ }
+        inFlight = false;
+        schedulePoll();
+      }
+      schedulePoll();
+
+      document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) {
+          if (pollTimer) clearTimeout(pollTimer);
+          poll();
+        }
+      });
+    })();
   </script>
 </body>
 </html>
