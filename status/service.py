@@ -200,9 +200,16 @@ def _list_queue_from_file(p: Path) -> list[QueueItem]:
         return []
 
     items = [_queue_item_from_dict(d, modified) for d in records]
-    # Newest first by addedAt/startedAt, falling back to file mtime.
-    items.sort(key=lambda i: i.modified, reverse=True)
-    return items
+    # Group by state so the dashboard surfaces the worker pickup order for
+    # pending items (which preserve their array position -- that is what
+    # `prioritize_item` manipulates). Everything else sorts newest-first.
+    in_progress = [i for i in items if i.state == 'in_progress']
+    pending = [i for i in items if i.state == 'pending']
+    paused = [i for i in items if i.state == 'paused']
+    other = [i for i in items if i.state not in ('pending', 'in_progress', 'paused')]
+    paused.sort(key=lambda i: i.modified, reverse=True)
+    other.sort(key=lambda i: i.modified, reverse=True)
+    return in_progress + pending + paused + other
 
 
 def _list_queue_from_dir(queue_dir: Path) -> list[QueueItem]:
@@ -233,6 +240,101 @@ def _queue_source_path() -> str:
         return str(queue_file)
     return str(settings.CAG_QUEUE_DIR)
 
+
+# ---------------------------------------------------------------------------
+# Write actions (priority / pause / resume / cancel)
+# ---------------------------------------------------------------------------
+
+def _read_queue_records() -> tuple[list[dict], Path]:
+    """Read queue.json into a list of dicts (preserving array order).
+
+    Returns (records, path) where records is empty if the file is missing or
+    unparseable. Path is always returned so callers can write back.
+    """
+    queue_file = Path(settings.CAG_QUEUE_FILE)
+    if not queue_file.is_file():
+        return [], queue_file
+    try:
+        text = queue_file.read_text(encoding='utf-8-sig', errors='replace')
+        data = json.loads(text)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return [], queue_file
+    if isinstance(data, list):
+        return [d for d in data if isinstance(d, dict)], queue_file
+    if isinstance(data, dict):
+        return [data], queue_file
+    return [], queue_file
+
+
+def _write_queue_records(records: list[dict], queue_file: Path) -> None:
+    """Atomic-ish write: tempfile + rename so a partial write can't corrupt the queue."""
+    tmp = queue_file.with_suffix(queue_file.suffix + '.tmp')
+    tmp.write_text(json.dumps(records, indent=4), encoding='utf-8')
+    tmp.replace(queue_file)
+
+
+def prioritize_item(item_id: str) -> bool:
+    """Move the item with this id to position 0 in the queue array.
+
+    The worker picks the first pending item in array order, so moving an item
+    to index 0 makes it next up (if pending). Returns True if found and moved.
+    """
+    records, qf = _read_queue_records()
+    idx = next((i for i, r in enumerate(records) if str(r.get('id')) == item_id), None)
+    if idx is None:
+        return False
+    target = records.pop(idx)
+    records.insert(0, target)
+    _write_queue_records(records, qf)
+    return True
+
+
+def set_item_status(item_id: str, new_status: str, extra: dict | None = None) -> bool:
+    """Set the status of the item with this id. Optionally merges extra fields
+    (e.g. {'pausedAt': '...', 'pauseReason': '...'}). Returns True if found."""
+    records, qf = _read_queue_records()
+    target = next((r for r in records if str(r.get('id')) == item_id), None)
+    if target is None:
+        return False
+    target['status'] = new_status
+    if extra:
+        for k, v in extra.items():
+            target[k] = v
+    _write_queue_records(records, qf)
+    return True
+
+
+def kill_runner_for_item(item_id: str) -> int:
+    """Find any powershell.exe / pwsh.exe process whose command line references
+    this queue item id (via cag-prompt-<id> or logs\\<id>.log) and kill the
+    process plus its children (claude.exe). Returns count killed."""
+    killed = 0
+    needle_prompt = f'cag-prompt-{item_id}'
+    needle_log = f'logs\\{item_id}.log'
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        try:
+            name = (proc.info.get('name') or '').lower()
+            if name not in ('powershell.exe', 'pwsh.exe'):
+                continue
+            cmdline = ' '.join(proc.info.get('cmdline') or [])
+            if needle_prompt not in cmdline and needle_log not in cmdline:
+                continue
+            # Kill children first (claude.exe is a child of the runner)
+            for child in proc.children(recursive=True):
+                try:
+                    child.kill()
+                except psutil.Error:
+                    pass
+            proc.kill()
+            killed += 1
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return killed
+
+
+# ---------------------------------------------------------------------------
+# Snapshot (read)
+# ---------------------------------------------------------------------------
 
 def collect_snapshot() -> Snapshot:
     monitor = _process_status('monitor', Path(settings.CAG_MONITOR_PIDFILE))

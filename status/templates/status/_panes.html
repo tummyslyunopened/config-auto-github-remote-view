@@ -38,6 +38,18 @@
         <span class="when">{{ item.modified }}</span>
       </div>
       <div class="meta">{{ item.filename }} · {{ item.size_bytes }} bytes</div>
+      <div class="actions">
+        {% if item.state == 'pending' %}
+          <form method="post" action="{% url 'queue_priority' item.filename %}">{% csrf_token %}<button class="act top" title="move to top of pending queue">↑ Top</button></form>
+          <form method="post" action="{% url 'queue_pause'    item.filename %}">{% csrf_token %}<button class="act pause" title="pause -- worker skips this until resumed">⏸ Pause</button></form>
+          <form method="post" action="{% url 'queue_cancel'   item.filename %}" onsubmit="return confirm('Cancel {{ item.filename }}?');">{% csrf_token %}<button class="act cancel" title="cancel (no work done)">✕ Cancel</button></form>
+        {% elif item.state == 'paused' %}
+          <form method="post" action="{% url 'queue_resume'   item.filename %}">{% csrf_token %}<button class="act resume" title="resume -- moves back to pending">▶ Resume</button></form>
+          <form method="post" action="{% url 'queue_cancel'   item.filename %}" onsubmit="return confirm('Cancel {{ item.filename }}?');">{% csrf_token %}<button class="act cancel" title="cancel">✕ Cancel</button></form>
+        {% elif item.state == 'in_progress' %}
+          <form method="post" action="{% url 'queue_cancel'   item.filename %}" onsubmit="return confirm('Cancel in-progress {{ item.filename }}? This kills the runner.');">{% csrf_token %}<button class="act cancel" title="cancel and kill the running claude process">✕ Cancel</button></form>
+        {% endif %}
+      </div>
     </li>
     {% endfor %}
   </ul>

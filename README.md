@@ -1,15 +1,27 @@
 # config-auto-github-remote-view
 
-A read-only, mobile-friendly Django web app for viewing the live status of
-[`config-auto-github`](https://github.com/tummyslyunopened/config-auto-github).
+A mobile-friendly Django web app for viewing **and lightly managing** the live
+status of [`config-auto-github`](https://github.com/tummyslyunopened/config-auto-github).
 
 Vendored as a submodule of
 [`tummyslyunopened/config`](https://github.com/tummyslyunopened/config).
 
 The page renders four panes — **issues in queue**, **monitor status**,
 **worker status**, and the most recent **log output** from each — and
-auto-refreshes every few seconds. There are no buttons, no logins, and no
-write actions: it is purely an observability pane.
+auto-refreshes every few seconds.
+
+Each queue item also exposes a small action row for queue management:
+
+| State | Available actions |
+|-------|-------------------|
+| `pending` | **↑ Top** (move to front of queue), **⏸ Pause**, **✕ Cancel** |
+| `paused` | **▶ Resume**, **✕ Cancel** |
+| `in_progress` | **✕ Cancel** (kills the runner and any spawned `claude.exe`) |
+| `done` / `error` / `cancelled` | — |
+
+The dashboard remains read-only for everything except those four queue mutations.
+No logins; bind to LAN and let your firewall handle access. CSRF protection is
+enabled on the POST forms.
 
 ---
 

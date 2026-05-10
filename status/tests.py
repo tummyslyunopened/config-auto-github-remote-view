@@ -72,8 +72,9 @@ class ServiceTests(TestCase):
 
     def test_reads_file_queue(self):
         # config-auto-github writes a single queue.json containing an array;
-        # the file-based reader must split that into individual items, sorted
-        # newest first.
+        # the file-based reader must split that into individual items, with the
+        # display order grouping pending in array order (worker pickup order)
+        # then everything else newest-first.
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
             (tmp / 'queue.json').write_text(
@@ -81,14 +82,14 @@ class ServiceTests(TestCase):
                     {
                         'id': 'issue-config-2',
                         'number': 2,
-                        'title': 'older issue',
+                        'title': 'older done issue',
                         'status': 'done',
                         'addedAt': '2026-05-09T00:00:00Z',
                     },
                     {
                         'id': 'issue-config-4',
                         'number': 4,
-                        'title': 'newer issue',
+                        'title': 'pending in array order',
                         'status': 'pending',
                         'addedAt': '2026-05-09T04:00:00Z',
                     },
@@ -100,13 +101,34 @@ class ServiceTests(TestCase):
                 snap = collect_snapshot()
 
         self.assertEqual(len(snap.queue), 2)
-        # Newest-first ordering by addedAt.
+        # Pending comes first (worker pickup order), then done.
         self.assertEqual(snap.queue[0].issue_number, 4)
         self.assertEqual(snap.queue[0].state, 'pending')
         self.assertEqual(snap.queue[0].filename, 'issue-config-4')
         self.assertEqual(snap.queue[1].issue_number, 2)
         self.assertEqual(snap.queue[1].state, 'done')
         self.assertEqual(snap.queue_dir, str(tmp / 'queue.json'))
+
+    def test_dashboard_orders_in_progress_before_pending_before_paused_before_done(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            (tmp / 'queue.json').write_text(
+                json.dumps([
+                    {'id': 'a-done',        'status': 'done',        'addedAt': '2026-05-09T01:00:00Z'},
+                    {'id': 'b-pending-1',   'status': 'pending',     'addedAt': '2026-05-09T02:00:00Z'},
+                    {'id': 'c-in-prog',     'status': 'in_progress', 'addedAt': '2026-05-09T03:00:00Z'},
+                    {'id': 'd-paused',      'status': 'paused',      'addedAt': '2026-05-09T04:00:00Z'},
+                    {'id': 'e-pending-2',   'status': 'pending',     'addedAt': '2026-05-09T05:00:00Z'},
+                ]),
+                encoding='utf-8',
+            )
+            with override_settings(**_settings_for(tmp)):
+                from status.service import collect_snapshot
+                snap = collect_snapshot()
+
+        ids = [it.filename for it in snap.queue]
+        # in_progress -> pending (array order preserved) -> paused -> done
+        self.assertEqual(ids, ['c-in-prog', 'b-pending-1', 'e-pending-2', 'd-paused', 'a-done'])
 
     def test_file_queue_takes_precedence_over_dir(self):
         # If both layouts are present, the single file wins.
@@ -192,3 +214,86 @@ class ViewTests(TestCase):
         self.assertIn('monitor', payload)
         self.assertIn('worker', payload)
         self.assertIn('queue', payload)
+
+
+def _write_queue(tmp: Path, records: list[dict]) -> None:
+    (tmp / 'queue.json').write_text(json.dumps(records), encoding='utf-8')
+
+
+def _read_queue(tmp: Path) -> list[dict]:
+    return json.loads((tmp / 'queue.json').read_text(encoding='utf-8'))
+
+
+class QueueWriteActionsTests(TestCase):
+    """The 4 dashboard write actions. Each POST should mutate queue.json and
+    redirect back to the dashboard."""
+
+    def test_priority_moves_item_to_array_top(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            _write_queue(tmp, [
+                {'id': 'first',  'status': 'pending'},
+                {'id': 'middle', 'status': 'pending'},
+                {'id': 'last',   'status': 'pending'},
+            ])
+            with override_settings(**_settings_for(tmp)):
+                resp = self.client.post('/queue/last/priority')
+            after = _read_queue(tmp)
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual([r['id'] for r in after], ['last', 'first', 'middle'])
+
+    def test_pause_sets_status_and_metadata(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            _write_queue(tmp, [{'id': 'x', 'status': 'pending'}])
+            with override_settings(**_settings_for(tmp)):
+                resp = self.client.post('/queue/x/pause')
+            after = _read_queue(tmp)
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(after[0]['status'], 'paused')
+        self.assertIn('pausedAt', after[0])
+        self.assertIn('pauseReason', after[0])
+
+    def test_resume_flips_paused_back_to_pending(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            _write_queue(tmp, [{'id': 'x', 'status': 'paused', 'pausedAt': '2026-01-01T00:00:00Z'}])
+            with override_settings(**_settings_for(tmp)):
+                resp = self.client.post('/queue/x/resume')
+            after = _read_queue(tmp)
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(after[0]['status'], 'pending')
+
+    def test_cancel_sets_status_and_calls_kill_runner(self):
+        # We don't have a real runner to kill in tests, but we verify the
+        # status flip and that the kill_runner_for_item call did not raise.
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            _write_queue(tmp, [{'id': 'x', 'status': 'in_progress'}])
+            with override_settings(**_settings_for(tmp)):
+                resp = self.client.post('/queue/x/cancel')
+            after = _read_queue(tmp)
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(after[0]['status'], 'cancelled')
+        self.assertIn('cancelReason', after[0])
+
+    def test_missing_item_redirects_without_changes(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            _write_queue(tmp, [{'id': 'real', 'status': 'pending'}])
+            with override_settings(**_settings_for(tmp)):
+                resp = self.client.post('/queue/missing/pause')
+            after = _read_queue(tmp)
+        # Still redirects (idempotent / forgiving), queue untouched
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(len(after), 1)
+        self.assertEqual(after[0]['status'], 'pending')
+
+    def test_get_requests_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            _write_queue(tmp, [{'id': 'x', 'status': 'pending'}])
+            with override_settings(**_settings_for(tmp)):
+                resp = self.client.get('/queue/x/pause')
+        # require_POST returns 405 for GET
+        self.assertEqual(resp.status_code, 405)
