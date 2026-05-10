@@ -185,6 +185,24 @@ class ViewTests(TestCase):
                 resp = self.client.get('/')
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, 'config-auto-github')
+        # No more meta-refresh; refresh happens via fetch against /fragment/.
+        self.assertNotContains(resp, 'http-equiv="refresh"')
+        self.assertContains(resp, 'data-fragment-url')
+        self.assertContains(resp, 'rel="manifest"')
+
+    def test_dashboard_fragment_returns_panes_only(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            with override_settings(**_settings_for(tmp)):
+                resp = self.client.get('/fragment/')
+        self.assertEqual(resp.status_code, 200)
+        body = resp.content.decode('utf-8')
+        # Fragment is the bare panes — no <html>/<head>/<script> wrapper.
+        self.assertNotIn('<html', body)
+        self.assertNotIn('<script', body)
+        self.assertIn('data-slug="monitor"', body)
+        self.assertIn('data-slug="worker"', body)
+        self.assertIn('data-slug="queue"', body)
 
     def test_dashboard_json(self):
         with tempfile.TemporaryDirectory() as td:

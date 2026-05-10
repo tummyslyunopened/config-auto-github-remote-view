@@ -1,0 +1,81 @@
+<section class="pane" data-slug="monitor">
+  <h2><span class="dot {% if s.monitor.running %}ok{% endif %}"></span> monitor</h2>
+  <div class="body">
+    <dl class="kv">
+      <dt>state</dt>
+      <dd>{% if s.monitor.running %}running{% else %}not running{% endif %}{% if s.monitor.detail %} <span class="meta">({{ s.monitor.detail }})</span>{% endif %}</dd>
+      {% if s.monitor.pid %}<dt>pid</dt><dd>{{ s.monitor.pid }}</dd>{% endif %}
+      {% if s.monitor.started_at %}<dt>started</dt><dd>{{ s.monitor.started_at }}</dd>{% endif %}
+      <dt>pidfile</dt><dd>{{ s.monitor.pid_file }}</dd>
+    </dl>
+  </div>
+</section>
+
+<section class="pane" data-slug="worker">
+  <h2><span class="dot {% if s.worker.running %}ok{% endif %}"></span> worker</h2>
+  <div class="body">
+    <dl class="kv">
+      <dt>state</dt>
+      <dd>{% if s.worker.running %}running{% else %}not running{% endif %}{% if s.worker.detail %} <span class="meta">({{ s.worker.detail }})</span>{% endif %}</dd>
+      {% if s.worker.pid %}<dt>pid</dt><dd>{{ s.worker.pid }}</dd>{% endif %}
+      {% if s.worker.started_at %}<dt>started</dt><dd>{{ s.worker.started_at }}</dd>{% endif %}
+      <dt>pidfile</dt><dd>{{ s.worker.pid_file }}</dd>
+    </dl>
+  </div>
+</section>
+
+<section class="pane full" data-slug="queue">
+  <h2>queue · {{ s.queue|length }} item{{ s.queue|length|pluralize }}</h2>
+  {% if s.queue %}
+  <ul class="queue-list">
+    {% for item in s.queue %}
+    <li>
+      <div class="row1">
+        <span class="title">
+          {% if item.issue_number %}#{{ item.issue_number }} · {% endif %}{{ item.title|default:item.filename }}
+          {% if item.state %} <span class="badge">{{ item.state }}</span>{% endif %}
+        </span>
+        <span class="when">{{ item.modified }}</span>
+      </div>
+      <div class="meta">{{ item.filename }} · {{ item.size_bytes }} bytes</div>
+      <div class="actions">
+        {% if item.state == 'pending' %}
+          <form method="post" action="{% url 'queue_priority' item.filename %}">{% csrf_token %}<button class="act top" title="move to top of pending queue">↑ Top</button></form>
+          <form method="post" action="{% url 'queue_pause'    item.filename %}">{% csrf_token %}<button class="act pause" title="pause -- worker skips this until resumed">⏸ Pause</button></form>
+          <form method="post" action="{% url 'queue_cancel'   item.filename %}" onsubmit="return confirm('Cancel {{ item.filename }}?');">{% csrf_token %}<button class="act cancel" title="cancel (no work done)">✕ Cancel</button></form>
+        {% elif item.state == 'paused' %}
+          <form method="post" action="{% url 'queue_resume'   item.filename %}">{% csrf_token %}<button class="act resume" title="resume -- moves back to pending">▶ Resume</button></form>
+          <form method="post" action="{% url 'queue_cancel'   item.filename %}" onsubmit="return confirm('Cancel {{ item.filename }}?');">{% csrf_token %}<button class="act cancel" title="cancel">✕ Cancel</button></form>
+        {% elif item.state == 'in_progress' %}
+          <form method="post" action="{% url 'queue_cancel'   item.filename %}" onsubmit="return confirm('Cancel in-progress {{ item.filename }}? This kills the runner.');">{% csrf_token %}<button class="act cancel" title="cancel and kill the running claude process">✕ Cancel</button></form>
+        {% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+    <div class="body"><div class="empty">queue empty (or {{ s.queue_dir }} not present)</div></div>
+  {% endif %}
+</section>
+
+<section class="pane" data-slug="monitor-log">
+  <h2>monitor log <span class="meta" style="text-transform:none;font-weight:400;">· {{ s.monitor_log_path }}</span></h2>
+  <div class="body flush">
+    {% if s.monitor_log_tail %}
+      <pre class="log">{% for line in s.monitor_log_tail %}{{ line }}{% endfor %}</pre>
+    {% else %}
+      <pre class="log empty-log">no log output (or file not present)</pre>
+    {% endif %}
+  </div>
+</section>
+
+<section class="pane" data-slug="worker-log">
+  <h2>worker log <span class="meta" style="text-transform:none;font-weight:400;">· {{ s.worker_log_path }}</span></h2>
+  <div class="body flush">
+    {% if s.worker_log_tail %}
+      <pre class="log">{% for line in s.worker_log_tail %}{{ line }}{% endfor %}</pre>
+    {% else %}
+      <pre class="log empty-log">no log output (or file not present)</pre>
+    {% endif %}
+  </div>
+</section>

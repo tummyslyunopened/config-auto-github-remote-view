@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="config-auto-github status">
+  <rect width="512" height="512" rx="96" fill="#0e1116"/>
+  <rect x="56" y="56" width="400" height="400" rx="64" fill="#161b22" stroke="#30363d" stroke-width="8"/>
+  <line x1="256" y1="188" x2="256" y2="138" stroke="#58a6ff" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="256" cy="120" r="22" fill="#3fb950"/>
+  <circle cx="256" cy="120" r="34" fill="none" stroke="#3fb950" stroke-opacity="0.28" stroke-width="6"/>
+  <rect x="132" y="188" width="248" height="208" rx="44" fill="#21262d" stroke="#58a6ff" stroke-width="8"/>
+  <circle cx="202" cy="272" r="22" fill="#3fb950"/>
+  <circle cx="310" cy="272" r="22" fill="#3fb950"/>
+  <rect x="188" y="334" width="136" height="16" rx="8" fill="#58a6ff"/>
+</svg>

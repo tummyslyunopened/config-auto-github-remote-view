@@ -13,6 +13,11 @@ def dashboard(request):
     return render(request, 'status/dashboard.html', {'s': snapshot})
 
 
+def dashboard_fragment(request):
+    snapshot = service.collect_snapshot()
+    return render(request, 'status/_panes.html', {'s': snapshot})
+
+
 def dashboard_json(request):
     snapshot = service.collect_snapshot()
     return JsonResponse(asdict(snapshot))
