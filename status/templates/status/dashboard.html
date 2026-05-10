@@ -201,28 +201,48 @@
           });
           if (resp.ok) {
             var html = await resp.text();
-            // Remember each log pane's scroll state so manual scrolling sticks
-            // across refreshes; if the user is at the bottom we keep tailing.
+            // Remember each pane's scroll state so manual scrolling sticks
+            // across refreshes. For logs we tail-to-bottom when the user is
+            // already at the bottom; for the queue list we just restore the
+            // exact scrollTop so trying to hit Pause/Cancel isn't fighting
+            // the auto-refresh.
             var prevScroll = {};
             main.querySelectorAll('section.pane[data-slug]').forEach(function (pane) {
               var slug = pane.getAttribute('data-slug');
+              var entry = {};
               var pre = pane.querySelector('pre.log');
-              if (!pre) return;
-              var atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 4;
-              prevScroll[slug] = { top: pre.scrollTop, atBottom: atBottom };
+              if (pre) {
+                var atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 4;
+                entry.log = { top: pre.scrollTop, atBottom: atBottom };
+              }
+              var qlist = pane.querySelector('.queue-list');
+              if (qlist) {
+                entry.queue = { top: qlist.scrollTop };
+              }
+              prevScroll[slug] = entry;
             });
+            // Also remember the document scroll so the page itself doesn't
+            // jump when the queue grows/shrinks above the viewport.
+            var docScrollY = window.scrollY || window.pageYOffset || 0;
             main.innerHTML = html;
             main.querySelectorAll('section.pane[data-slug]').forEach(function (pane) {
               var slug = pane.getAttribute('data-slug');
+              var prev = prevScroll[slug] || {};
               var pre = pane.querySelector('pre.log');
-              if (!pre) return;
-              var prev = prevScroll[slug];
-              if (!prev || prev.atBottom) {
-                pre.scrollTop = pre.scrollHeight;
-              } else {
-                pre.scrollTop = prev.top;
+              if (pre) {
+                var plog = prev.log;
+                if (!plog || plog.atBottom) {
+                  pre.scrollTop = pre.scrollHeight;
+                } else {
+                  pre.scrollTop = plog.top;
+                }
+              }
+              var qlist = pane.querySelector('.queue-list');
+              if (qlist && prev.queue) {
+                qlist.scrollTop = prev.queue.top;
               }
             });
+            window.scrollTo(0, docScrollY);
             if (generatedEl) {
               generatedEl.textContent = 'generated ' + new Date().toISOString().replace(/\.\d+Z$/, '+00:00');
             }
