@@ -150,6 +150,61 @@ class ServiceTests(TestCase):
         self.assertEqual(len(snap.queue), 1)
         self.assertEqual(snap.queue[0].title, 'file')
 
+    def test_github_url_built_from_repo_and_number_for_issue(self):
+        # Issue records carry repo + number but no `url`; we synthesise the
+        # canonical github issue URL so the dashboard can link out.
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            (tmp / 'queue.json').write_text(
+                json.dumps([{
+                    'id': 'issue-config-7',
+                    'type': 'new_issue',
+                    'repo': 'tummyslyunopened/config',
+                    'number': 7,
+                    'title': 'something',
+                    'status': 'pending',
+                }]),
+                encoding='utf-8',
+            )
+            with override_settings(**_settings_for(tmp)):
+                from status.service import collect_snapshot
+                snap = collect_snapshot()
+        self.assertEqual(snap.queue[0].github_url, 'https://github.com/tummyslyunopened/config/issues/7')
+
+    def test_github_url_uses_explicit_url_for_comment(self):
+        # Comment records carry an explicit `url` (which deep-links to the
+        # comment anchor); we should pass that through verbatim.
+        comment_url = 'https://github.com/tummyslyunopened/config/issues/4#issuecomment-4412095325'
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            (tmp / 'queue.json').write_text(
+                json.dumps([{
+                    'id': 'comment-4412095325',
+                    'type': 'issue_comment',
+                    'repo': 'tummyslyunopened/config',
+                    'number': 4,
+                    'url': comment_url,
+                    'status': 'pending',
+                }]),
+                encoding='utf-8',
+            )
+            with override_settings(**_settings_for(tmp)):
+                from status.service import collect_snapshot
+                snap = collect_snapshot()
+        self.assertEqual(snap.queue[0].github_url, comment_url)
+
+    def test_github_url_empty_when_no_repo_or_number(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            (tmp / 'queue.json').write_text(
+                json.dumps([{'id': 'orphan', 'title': 'no repo info', 'status': 'pending'}]),
+                encoding='utf-8',
+            )
+            with override_settings(**_settings_for(tmp)):
+                from status.service import collect_snapshot
+                snap = collect_snapshot()
+        self.assertEqual(snap.queue[0].github_url, '')
+
     def test_pidfile_with_dead_pid_reports_not_running(self):
         import psutil
         # Pick a PID well above any plausible OS pid_max that is also not
@@ -203,6 +258,25 @@ class ViewTests(TestCase):
         self.assertIn('data-slug="monitor"', body)
         self.assertIn('data-slug="worker"', body)
         self.assertIn('data-slug="queue"', body)
+
+    def test_dashboard_renders_github_link_for_items_with_url(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            (tmp / 'queue.json').write_text(
+                json.dumps([{
+                    'id': 'issue-config-7',
+                    'type': 'new_issue',
+                    'repo': 'tummyslyunopened/config',
+                    'number': 7,
+                    'title': 'something',
+                    'status': 'pending',
+                }]),
+                encoding='utf-8',
+            )
+            with override_settings(**_settings_for(tmp)):
+                resp = self.client.get('/')
+        self.assertContains(resp, 'https://github.com/tummyslyunopened/config/issues/7')
+        self.assertContains(resp, 'target="_blank"')
 
     def test_dashboard_json(self):
         with tempfile.TemporaryDirectory() as td:

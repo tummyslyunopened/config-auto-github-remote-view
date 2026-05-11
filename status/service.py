@@ -9,6 +9,7 @@ viewer is to keep rendering even when half the data is missing.
 from __future__ import annotations
 
 import json
+import re
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -39,6 +40,7 @@ class QueueItem:
     title: str = ''
     issue_number: int | None = None
     state: str = ''
+    github_url: str = ''
 
 
 @dataclass
@@ -53,6 +55,32 @@ class Snapshot:
     monitor_log_tail: list[str] = field(default_factory=list)
     worker_log_tail: list[str] = field(default_factory=list)
     refresh_seconds: int = 5
+
+
+_REPO_RE = re.compile(r'^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$')
+
+
+def _github_url_for(d: dict[str, Any]) -> str:
+    """Derive the upstream GitHub URL for a queue record.
+
+    Comments carry an explicit `url`. Issues only carry `repo` + `number`, so
+    we synthesise the canonical issue URL from those. Anything else (no usable
+    fields, or a `repo` that doesn't look like `owner/name`) returns ''.
+    """
+    url = d.get('url')
+    if isinstance(url, str) and url.startswith(('http://', 'https://')):
+        return url
+    repo = d.get('repo')
+    number = d.get('number') or d.get('issue_number')
+    if not isinstance(repo, str) or not _REPO_RE.match(repo):
+        return ''
+    try:
+        n = int(number) if number is not None else None
+    except (TypeError, ValueError):
+        return ''
+    if n is None:
+        return ''
+    return f'https://github.com/{repo}/issues/{n}'
 
 
 def _read_pid_file(path: Path) -> int | None:
@@ -157,6 +185,7 @@ def _load_queue_item(p: Path) -> QueueItem:
         except (TypeError, ValueError):
             item.issue_number = None
         item.state = str(data.get('state') or data.get('status') or '')
+        item.github_url = _github_url_for(data)
     return item
 
 
@@ -179,6 +208,7 @@ def _queue_item_from_dict(d: dict[str, Any], modified: str) -> QueueItem:
     except (TypeError, ValueError):
         item.issue_number = None
     item.state = str(d.get('state') or d.get('status') or '')
+    item.github_url = _github_url_for(d)
     return item
 
 
