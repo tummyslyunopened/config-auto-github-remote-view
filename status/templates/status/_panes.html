@@ -39,6 +39,9 @@
       </div>
       <div class="meta">{{ item.filename }} · {{ item.size_bytes }} bytes</div>
       <div class="actions">
+        {% if item.github_url %}
+          <a class="act link" href="{{ item.github_url }}" target="_blank" rel="noopener noreferrer" title="open the GitHub issue or comment in a new tab">↗ GitHub</a>
+        {% endif %}
         {% if item.state == 'pending' %}
           <form method="post" action="{% url 'queue_priority' item.filename %}">{% csrf_token %}<button class="act top" title="move to top of pending queue">↑ Top</button></form>
           <form method="post" action="{% url 'queue_pause'    item.filename %}">{% csrf_token %}<button class="act pause" title="pause -- worker skips this until resumed">⏸ Pause</button></form>
